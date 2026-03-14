@@ -393,6 +393,33 @@
     }
     .settings-btn.reset:hover { background: #fff4e0; border-color: #fdab3d; color: #c07000; }
 
+    /* ── Login overlay ──────────────────────────────────────────── */
+    #login-overlay {
+      position: fixed; inset: 0; z-index: 2000;
+      background: #0C3C60; display: flex; align-items: center; justify-content: center;
+    }
+    #login-overlay.hidden { display: none; }
+    #login-box {
+      background: #fff; border-radius: 14px; box-shadow: 0 12px 40px rgba(0,0,0,0.25);
+      padding: 36px 40px; width: 380px; max-width: 92vw; text-align: center;
+    }
+    #login-box .login-logo { height: 40px; margin-bottom: 18px; }
+    #login-box h2 { font-size: 18px; font-weight: 700; color: #0C3C60; margin-bottom: 6px; }
+    #login-box .login-subtitle { font-size: 13px; color: #888; margin-bottom: 22px; }
+    #login-box input[type="password"] {
+      width: 100%; padding: 11px 14px; border: 1px solid #d0d8e4; border-radius: 8px;
+      font-size: 14px; outline: none; transition: border-color 0.2s;
+    }
+    #login-box input[type="password"]:focus { border-color: #0C3C60; }
+    #login-box .login-btn {
+      width: 100%; padding: 11px; margin-top: 14px; background: #0C3C60; color: #fff;
+      border: none; border-radius: 8px; font-size: 14px; font-weight: 700; cursor: pointer;
+      transition: background 0.2s;
+    }
+    #login-box .login-btn:hover { background: #072136; }
+    #login-box .login-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    #login-error { color: #e2445c; font-size: 13px; margin-top: 10px; min-height: 18px; }
+
     footer { text-align: center; padding: 20px 24px 28px; font-size: 12px; color: #aaa; }
     footer .footer-brand { margin-top: 6px; font-size: 11px; color: #ccc; letter-spacing: 0.3px; }
 
@@ -404,6 +431,17 @@
   </style>
 </head>
 <body>
+
+<!-- Login Overlay -->
+<div id="login-overlay">
+  <div id="login-box">
+    <h2>Momentum SP</h2>
+    <p class="login-subtitle">Enter your dashboard password to continue</p>
+    <input type="password" id="login-password" placeholder="Password" onkeydown="if(event.key==='Enter')doLogin()" autofocus />
+    <button class="login-btn" id="login-btn" onclick="doLogin()">Sign in</button>
+    <div id="login-error"></div>
+  </div>
+</div>
 
 <header>
   <div class="header-brand">
@@ -549,9 +587,10 @@
 
 <script>
   // ── Configuration ─────────────────────────────────────────────────────────────
-  const MONDAY_API_TOKEN    = 'eyJhbGciOiJIUzI1NiJ9.eyJ0aWQiOjYzMDI2NDg3OCwiYWFpIjoxMSwidWlkIjo2ODIwNjY0OSwiaWFkIjoiMjAyNi0wMy0wOFQxMzo0MzowNS4zMDhaIiwicGVyIjoibWU6d3JpdGUiLCJhY3RpZCI6MjYzNTA4MzgsInJnbiI6ImV1YzEifQ.qQCDXtNRqTyn1vsYazhDnUtLakDm56YsGvabmSUfGtE';
+  const CF_BASE_URL         = 'https://europe-west2-momentum-sp-invoicing.cloudfunctions.net/momentum-invoicing';
   const REFRESH_INTERVAL_MS = 3 * 60 * 60 * 1000;
-  const API_URL             = 'https://api.monday.com/v2';
+  const COOKIE_NAME         = 'msp_api_key';
+  let apiKey = '';  // set after login or from cookie
 
   const CHART_COLOURS = [
     '#4285f4','#00c875','#e2445c','#fdab3d','#9d50dd',
@@ -635,101 +674,87 @@
   let boardItemsCache = {}; // { boardId: [{ item, colMap, boardName }] }
   let boardsCache     = [];
 
-  // ── API helper ────────────────────────────────────────────────────────────────
-  async function gql(query, variables = {}) {
-    const res = await fetch(API_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': MONDAY_API_TOKEN,
-        'API-Version': '2024-10'
-      },
-      body: JSON.stringify({ query, variables })
-    });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const json = await res.json();
-    if (json.errors) throw new Error(json.errors.map(e => e.message).join('; '));
-    return json.data;
+  // ── Cookie helpers (cross-subdomain SSO on .flowintel.co.uk) ────────────────
+  function getCookie(name) {
+    const match = document.cookie.match(new RegExp('(?:^|; )' + name + '=([^;]*)'));
+    return match ? decodeURIComponent(match[1]) : '';
+  }
+  function setCookie(name, value, days) {
+    let expires = '';
+    if (days) { const d = new Date(); d.setTime(d.getTime() + days * 86400000); expires = '; expires=' + d.toUTCString(); }
+    const domain = location.hostname.endsWith('.flowintel.co.uk') ? '; domain=.flowintel.co.uk' : '';
+    const secure = location.protocol === 'https:' ? '; Secure; SameSite=Lax' : '';
+    document.cookie = name + '=' + encodeURIComponent(value) + expires + domain + '; path=/' + secure;
+  }
+  function deleteCookie(name) {
+    const domain = location.hostname.endsWith('.flowintel.co.uk') ? '; domain=.flowintel.co.uk' : '';
+    document.cookie = name + '=; expires=Thu, 01 Jan 1970 00:00:00 GMT' + domain + '; path=/';
   }
 
-  // ── Discover all SP boards ────────────────────────────────────────────────────
-  async function fetchAllSPBoards() {
-    const boards = [];
-    const colTitleSet = new Set();
-    let page = 1;
-    const limit = 100;
+  // ── Login / Auth ────────────────────────────────────────────────────────────
+  function showLogin() { document.getElementById('login-overlay').classList.remove('hidden'); }
+  function hideLogin() { document.getElementById('login-overlay').classList.add('hidden'); }
 
-    while (true) {
-      const data = await gql(`
-        query ($page: Int!, $limit: Int!) {
-          boards(limit: $limit, page: $page, board_kind: share, state: active, order_by: created_at) {
-            id name columns { id title }
-          }
-        }`, { page, limit });
-
-      const batch = (data.boards || []).filter(b =>
-        !b.name.toLowerCase().startsWith('subitems of')
-      );
-
-      for (const b of batch) {
-        const colMap = {};
-        for (const col of (b.columns || [])) {
-          const lowerTitle = col.title.toLowerCase();
-          colMap[col.id] = lowerTitle;
-          colTitleSet.add(lowerTitle);
-        }
-        boards.push({ id: b.id, name: b.name, colMap });
-      }
-
-      if ((data.boards || []).length < limit) break;
-      page++;
-    }
-
-    allDiscoveredColumns = [...colTitleSet].sort((a, b) => a.localeCompare(b));
-    return boards;
-  }
-
-  // ── Fetch items from one board (paginated) ────────────────────────────────────
-  async function fetchBoardItems(boardId) {
-    const items = [];
-    let cursor = null;
-    const limit = 200;
-
-    while (true) {
-      let data;
-
-      if (cursor) {
-        data = await gql(`
-          query ($cursor: String!, $limit: Int!) {
-            next_items_page(limit: $limit, cursor: $cursor) {
-              cursor
-              items { id group { title } column_values { id text value ... on FormulaValue { display_value } } }
-            }
-          }`, { cursor, limit });
-        const page = data.next_items_page;
-        if (!page) break;
-        items.push(...(page.items || []));
-        cursor = page.cursor || null;
+  async function doLogin() {
+    const pw = document.getElementById('login-password').value.trim();
+    const errEl = document.getElementById('login-error');
+    const btn = document.getElementById('login-btn');
+    if (!pw) { errEl.textContent = 'Please enter a password'; return; }
+    errEl.textContent = ''; btn.disabled = true;
+    try {
+      const res = await fetch(CF_BASE_URL + '/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: pw })
+      });
+      const json = await res.json();
+      if (json.success && json.api_key) {
+        apiKey = json.api_key;
+        setCookie(COOKIE_NAME, apiKey, 30);
+        hideLogin();
+        loadDashboard();
       } else {
-        data = await gql(`
-          query ($boardId: ID!, $limit: Int!) {
-            boards(ids: [$boardId]) {
-              items_page(limit: $limit) {
-                cursor
-                items { id group { title } column_values { id text value ... on FormulaValue { display_value } } }
-              }
-            }
-          }`, { boardId: String(boardId), limit });
-        const page = data.boards?.[0]?.items_page;
-        if (!page) break;
-        items.push(...(page.items || []));
-        cursor = page.cursor || null;
+        errEl.textContent = json.error || 'Invalid password';
       }
+    } catch (e) {
+      errEl.textContent = 'Connection error — please try again';
+      console.error('Login error:', e);
+    } finally { btn.disabled = false; }
+  }
 
-      if (!cursor) break;
+  function checkAuth() {
+    const saved = getCookie(COOKIE_NAME);
+    if (saved) { apiKey = saved; return true; }
+    return false;
+  }
+
+  // ── API (via Cloud Function proxy) ──────────────────────────────────────────
+  async function cfFetch(endpoint, options = {}) {
+    const res = await fetch(CF_BASE_URL + endpoint, {
+      ...options,
+      headers: { 'X-API-Key': apiKey, ...(options.headers || {}) }
+    });
+    if (res.status === 401) {
+      deleteCookie(COOKIE_NAME);
+      apiKey = '';
+      showLogin();
+      throw new Error('Session expired — please log in again');
     }
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return res.json();
+  }
 
-    return items;
+  // ── Fetch boards (via Cloud Function /boards proxy) ─────────────────────────
+  async function fetchAllSPBoards() {
+    const data = await cfFetch('/boards');
+    allDiscoveredColumns = (data.allDiscoveredColumns || []);
+    return data.boards || [];
+  }
+
+  // ── Fetch items (via Cloud Function /items proxy) ───────────────────────────
+  async function fetchBoardItems(boardId) {
+    const data = await cfFetch('/items?board_id=' + boardId);
+    return data.items || [];
   }
 
   // ── Fetch and cache all items; collect discovered group names ─────────────────
@@ -1299,10 +1324,11 @@
 
   // ── Main load ─────────────────────────────────────────────────────────────────
   async function loadDashboard() {
+    if (!apiKey) { showLogin(); return; }
     const btn = document.getElementById('refresh-btn');
     btn.disabled = true;
     setError('');
-    setStatus('Connecting to Monday.com…');
+    setStatus('Connecting…');
 
     try {
       setStatus('Discovering boards…');
@@ -1336,7 +1362,14 @@
   function triggerRefresh() { loadDashboard(); }
 
   setInterval(loadDashboard, REFRESH_INTERVAL_MS);
-  loadDashboard();
+
+  // ── Startup: check for existing cookie, skip login if valid ─────────────────
+  if (checkAuth()) {
+    hideLogin();
+    loadDashboard();
+  } else {
+    showLogin();
+  }
 </script>
 </body>
 </html>
