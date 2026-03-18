@@ -479,14 +479,6 @@
     </div>
   </div>
 
-  <!-- Widget Year Filter -->
-  <div style="background:#fff;border-radius:10px;padding:12px 18px;margin-bottom:12px;box-shadow:0 1px 4px rgba(0,0,0,0.08);display:flex;align-items:center;gap:12px;">
-    <label for="widget-year-select" style="font-size:12px;font-weight:600;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Filter widgets by MOS Sent year</label>
-    <select id="widget-year-select" onchange="updateDisplay()" style="font-family:inherit;font-size:13px;color:#333;background:#fff;border:1px solid #d0d8e4;border-radius:6px;padding:6px 28px 6px 10px;cursor:pointer;appearance:none;-webkit-appearance:none;background-image:url(&quot;data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%23888' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E&quot;);background-repeat:no-repeat;background-position:right 8px center;">
-      <option value="">All Time</option>
-    </select>
-  </div>
-
   <!-- Number widgets -->
   <div class="widgets-row">
     <div class="widget">
@@ -842,7 +834,6 @@
   function processItem({ item, colMap, boardName }, feeFieldPattern) {
     let owner = 'Unassigned';
     let fee   = 0;
-    let mosSentDate = '';
     const group = item.group?.title || '';
     const feePattern = (feeFieldPattern || '').trim();
 
@@ -854,17 +845,15 @@
         if (text) owner = text.split(',')[0].trim();
       } else if (feePattern && colTitle.includes(feePattern)) {
         fee = extractFeeNumber(text, cv.value, cv.display_value);
-      } else if (colTitle === 'mos sent to msp') {
-        mosSentDate = text;
       }
     }
 
-    return { owner, fee, client: boardName || 'Unknown', group, mosSentDate };
+    return { owner, fee, client: boardName || 'Unknown', group };
   }
 
   // ── Categorise using configured group lists ───────────────────────────────────
   // feeFieldPattern: passed through to processItem for fee extraction
-  function categorise(allItems, feeFieldPattern, filterYear) {
+  function categorise(allItems, feeFieldPattern) {
     const liveSet  = new Set(groupConfig.live);
     const fallsSet = new Set(groupConfig.falls);
     const exchSet  = new Set(groupConfig.exch);
@@ -872,14 +861,7 @@
     const live = [], falls = [], exch = [];
 
     for (const entry of allItems) {
-      const { owner, fee, client, group, mosSentDate } = processItem(entry, feeFieldPattern);
-
-      // Year filter based on MOS Sent date
-      if (filterYear) {
-        if (!mosSentDate) continue;
-        const mosYear = parseInt(mosSentDate.split('-')[0]);
-        if (mosYear !== filterYear) continue;
-      }
+      const { owner, fee, client, group } = processItem(entry, feeFieldPattern);
 
       if (liveSet.has(group))       live.push({ owner, fee, client });
       else if (fallsSet.has(group)) falls.push({ owner, fee, client });
@@ -1015,41 +997,11 @@
   }
 
   // ── Update all display elements ───────────────────────────────────────────────
-  function populateWidgetYearSelect() {
-    const allItems = getCheckedItems();
-    const yearSet = new Set();
-    for (const entry of allItems) {
-      const { mosSentDate } = processItem(entry);
-      if (mosSentDate) {
-        const y = parseInt(mosSentDate.split('-')[0]);
-        if (!isNaN(y)) yearSet.add(y);
-      }
-    }
-    const sel = document.getElementById('widget-year-select');
-    const currentVal = sel.value;
-    while (sel.children.length > 1) sel.removeChild(sel.lastChild);
-    const years = Array.from(yearSet).sort((a, b) => b - a);
-    for (const y of years) {
-      const opt = document.createElement('option');
-      opt.value = y; opt.textContent = y;
-      sel.appendChild(opt);
-    }
-    // Default to current year if available and no previous selection
-    const currentYear = new Date().getFullYear();
-    if (!currentVal && years.includes(currentYear)) {
-      sel.value = currentYear;
-    } else if (currentVal) {
-      sel.value = currentVal;
-    }
-  }
-
   function updateDisplay() {
     const allItems = getCheckedItems();
-    const yearVal = document.getElementById('widget-year-select').value;
-    const filterYear = yearVal ? parseInt(yearVal) : 0;
 
     // Primary categorise (no fee needed for counts/pie charts)
-    const { live, falls, exch } = categorise(allItems, '', filterYear);
+    const { live, falls, exch } = categorise(allItems);
 
     setText('w-live',  live.length);
     setText('w-fall',  falls.length);
@@ -1060,8 +1012,8 @@
     const lgField = feeConfig.liveGross || '';
     const bkField = feeConfig.banked    || '';
 
-    const lgResult = categorise(allItems, lgField, filterYear);
-    const bkResult = lgField === bkField ? lgResult : categorise(allItems, bkField, filterYear);
+    const lgResult = categorise(allItems, lgField);
+    const bkResult = lgField === bkField ? lgResult : categorise(allItems, bkField);
 
     const liveGross = lgResult.live;
     const bankedSet = bkResult.exch;
@@ -1391,7 +1343,6 @@
       buildFilterPanel(boardsCache);
 
       setStatus('Processing data…');
-      populateWidgetYearSelect();
       updateDisplay();
 
       const now = new Date();
