@@ -244,39 +244,6 @@
       height: 260px; font-size: 13px; color: #aaa;
     }
 
-    /* ── Client table ───────────────────────────────────────────────── */
-    #client-table-card {
-      background: #fff;
-      border-radius: 10px;
-      padding: 20px;
-      box-shadow: 0 1px 4px rgba(0,0,0,0.08);
-      margin-top: 20px;
-    }
-    #client-table-card h3 { font-size: 14px; font-weight: 600; color: #444; margin-bottom: 14px; }
-    #client-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-    #client-table thead th {
-      text-align: left;
-      font-size: 11px; font-weight: 700; text-transform: uppercase;
-      letter-spacing: 0.5px; color: #888;
-      padding: 0 10px 10px;
-      border-bottom: 2px solid #eef0f3;
-    }
-    #client-table thead th:nth-child(2),
-    #client-table thead th:nth-child(3),
-    #client-table thead th:nth-child(4) { text-align: right; }
-    #client-table tbody tr:hover { background: #f7f9fc; }
-    #client-table tbody td { padding: 9px 10px; border-bottom: 1px solid #f0f2f5; color: #333; }
-    #client-table tbody td:nth-child(2) { text-align: right; font-weight: 700; color: #0C3C60; }
-    #client-table tbody td:nth-child(3) { text-align: right; font-weight: 700; color: #e2445c; }
-    #client-table tbody td:nth-child(4) { text-align: right; font-weight: 600; color: #555; }
-    #client-table tfoot td {
-      padding: 10px 10px 2px; font-size: 12px; font-weight: 700;
-      color: #555; border-top: 2px solid #eef0f3;
-    }
-    #client-table tfoot td:nth-child(2) { text-align: right; color: #0C3C60; }
-    #client-table tfoot td:nth-child(3) { text-align: right; color: #e2445c; }
-    #client-table tfoot td:nth-child(4) { text-align: right; color: #555; }
-
     /* ── Settings modal ─────────────────────────────────────────────── */
     #settings-overlay {
       display: none;
@@ -552,24 +519,6 @@
     </div>
   </div>
 
-  <!-- Cases per client table -->
-  <div id="client-table-card">
-    <h3>Cases per Client</h3>
-    <table id="client-table">
-      <thead>
-        <tr>
-          <th>Client</th>
-          <th>Live Cases</th>
-          <th>Fallthroughs</th>
-          <th>Exch &amp; Comp : Fallthroughs</th>
-        </tr>
-      </thead>
-      <tbody id="client-table-body">
-        <tr><td colspan="4" style="color:#aaa;padding:12px 10px">Loading…</td></tr>
-      </tbody>
-      <tfoot id="client-table-foot"></tfoot>
-    </table>
-  </div>
 </main>
 
 <footer>
@@ -894,59 +843,7 @@
     return map;
   }
 
-  function countByClient(arr) {
-    const map = {};
-    for (const { client } of arr) map[client] = (map[client] || 0) + 1;
-    return map;
-  }
-
   function sumFees(arr) { return arr.reduce((s, { fee }) => s + fee, 0); }
-
-  function calcRatio(e, f) {
-    if (e === 0 && f === 0) return '—';
-    if (f === 0) return `${e} : 0`;
-    return `${(e / f).toFixed(1)} : 1`;
-  }
-
-  // ── Render client table ───────────────────────────────────────────────────────
-  function renderClientTable(liveItems, fallItems, exchItems) {
-    const liveCounts = countByClient(liveItems);
-    const fallCounts = countByClient(fallItems);
-    const exchCounts = countByClient(exchItems);
-
-    const clients = [...new Set([
-      ...Object.keys(liveCounts),
-      ...Object.keys(fallCounts),
-      ...Object.keys(exchCounts)
-    ])].sort((a, b) => (liveCounts[b] || 0) - (liveCounts[a] || 0));
-
-    const tbody = document.getElementById('client-table-body');
-    const tfoot = document.getElementById('client-table-foot');
-
-    if (!clients.length) {
-      tbody.innerHTML = '<tr><td colspan="4" style="color:#aaa;padding:12px 10px">No data</td></tr>';
-      tfoot.innerHTML = '';
-      return;
-    }
-
-    tbody.innerHTML = clients.map(client => {
-      const e = exchCounts[client] || 0;
-      const f = fallCounts[client] || 0;
-      return `<tr>
-        <td>${client}</td>
-        <td>${liveCounts[client] || 0}</td>
-        <td>${f}</td>
-        <td>${calcRatio(e, f)}</td>
-      </tr>`;
-    }).join('');
-
-    tfoot.innerHTML = `<tr>
-      <td>Total</td>
-      <td>${liveItems.length}</td>
-      <td>${fallItems.length}</td>
-      <td></td>
-    </tr>`;
-  }
 
   // ── Render pie chart ──────────────────────────────────────────────────────────
   function renderPieChart(canvasId, noDataId, ownerCounts) {
@@ -1039,7 +936,6 @@
 
     renderPieChart('chart-live', 'nd-live', countByOwner(live));
     renderPieChart('chart-exch', 'nd-exch', countByOwner(exch));
-    renderClientTable(live, falls, exch);
 
     updateFilterBadge();
     updateFooter(allItems.length);
