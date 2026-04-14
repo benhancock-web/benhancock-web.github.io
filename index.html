@@ -868,7 +868,13 @@
       const text     = (cv.text  || '').trim();
 
       if (colTitle === 'owner' || colTitle === 'person') {
-        if (text) owner = text.split(',')[0].trim();
+        // Effective owner = LAST person in the owners list. Single owner (98% case)
+        // collapses to current behaviour. When 2+ owners (e.g. trainee added as
+        // secondary), last wins. See DECISION-LOG 14 April 2026.
+        if (text) {
+          const list = text.split(',').map(s => s.trim()).filter(Boolean);
+          if (list.length) owner = list[list.length - 1];
+        }
       } else if (feePattern && colTitle.includes(feePattern)) {
         fee = extractFeeNumber(text, cv.value, cv.display_value);
       }
